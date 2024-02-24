@@ -1,7 +1,9 @@
 tmp.*
 outputs/
 tb-logs/
-/examples
+examples/
+edge_aistpp/
+data/
 
 
 # Byte-compiled / optimized / DLL files
