@@ -52,29 +52,32 @@ class AISTPPDataset(Dataset):
             pickle.dump(
                 normalizer, open(os.path.join(backup_path, "normalizer.pkl"), "wb")
             )
-        # load raw data
+        # load raw pose data
         if not force_reload and pickle_name in os.listdir(backup_path):
             print("Using cached dataset...")
             with open(os.path.join(backup_path, pickle_name), "rb") as f:
                 data = pickle.load(f)
         else:
             print("Loading dataset...")
-            data = self.load_aistpp()  # Call this last
+            data = self.load_aistpp_pose()  # Call this last
             with open(os.path.join(backup_path, pickle_name), "wb") as f:
                 pickle.dump(data, f, pickle.HIGHEST_PROTOCOL)
 
         print(
             f"Loaded {self.name} Dataset With Dimensions: Pos: {data['pos'].shape}, Q: {data['q'].shape}"
         )
-
+        
         # process data, convert to 6dof etc
         pose_input = self.process_dataset(data["pos"], data["q"])
+        # load feature & wav paths
+        feature_paths = self.load_aistpp_feat()
+        
         self.data = {
             "pose": pose_input,
-            "filenames": data["filenames"],
-            "wavs": data["wavs"],
+            "filenames": feature_paths["filenames"],
+            "wavs": feature_paths["wavs"],
         }
-        assert len(pose_input) == len(data["filenames"])
+        assert len(pose_input) == len(feature_paths["filenames"])
         self.length = len(pose_input)
 
     def __len__(self):
@@ -85,7 +88,7 @@ class AISTPPDataset(Dataset):
         feature = torch.from_numpy(np.load(filename_))
         return self.data["pose"][idx], feature, filename_, self.data["wavs"][idx]
 
-    def load_aistpp(self):
+    def load_aistpp_pose(self):
         # open data path
         split_data_path = os.path.join(
             self.data_path, "train" if self.train else "test"
@@ -102,41 +105,52 @@ class AISTPPDataset(Dataset):
         #   |    |- wavs
 
         motion_path = os.path.join(split_data_path, "motions_sliced")
-        sound_path = os.path.join(split_data_path, f"{self.feature_type}_feats")
-        wav_path = os.path.join(split_data_path, f"wavs_sliced")
         # sort motions and sounds
         motions = sorted(glob.glob(os.path.join(motion_path, "*.pkl")))
-        features = sorted(glob.glob(os.path.join(sound_path, "*.npy")))
-        wavs = sorted(glob.glob(os.path.join(wav_path, "*.wav")))
 
         # stack the motions and features together
         all_pos = []
         all_q = []
-        all_names = []
-        all_wavs = []
-        assert len(motions) == len(features)
-        for motion, feature, wav in zip(motions, features, wavs):
+        # assert len(motions) == len(features)
+        for motion in motions:
             # make sure name is matching
             m_name = os.path.splitext(os.path.basename(motion))[0]
-            f_name = os.path.splitext(os.path.basename(feature))[0]
-            w_name = os.path.splitext(os.path.basename(wav))[0]
-            assert m_name == f_name == w_name, str((motion, feature, wav))
             # load motion
             data = pickle.load(open(motion, "rb"))
             pos = data["pos"]
             q = data["q"]
             all_pos.append(pos)
             all_q.append(q)
-            all_names.append(feature)
-            all_wavs.append(wav)
 
         all_pos = np.array(all_pos)  # N x seq x 3
         all_q = np.array(all_q)  # N x seq x (joint * 3)
         # downsample the motions to the data fps
-        print(all_pos.shape)
+        # print(all_pos.shape)
         all_pos = all_pos[:, :: self.data_stride, :]
         all_q = all_q[:, :: self.data_stride, :]
-        data = {"pos": all_pos, "q": all_q, "filenames": all_names, "wavs": all_wavs}
+        data = {"pos": all_pos, "q": all_q}
+        return data
+    
+    def load_aistpp_feat(self):
+        split_data_path = os.path.join(
+            self.data_path, "train" if self.train else "test"
+        )
+        sound_path = os.path.join(split_data_path, f"{self.feature_type}_feats")
+        wav_path = os.path.join(split_data_path, f"wavs_sliced")
+        
+        features = sorted(glob.glob(os.path.join(sound_path, "*.npy")))
+        wavs = sorted(glob.glob(os.path.join(wav_path, "*.wav")))
+        
+        all_names = []
+        all_wavs = []
+        for feature, wav in zip(features, wavs):
+            f_name = os.path.splitext(os.path.basename(feature))[0]
+            w_name = os.path.splitext(os.path.basename(wav))[0]
+            assert f_name == w_name, str((feature, wav))
+            
+            all_names.append(feature)
+            all_wavs.append(wav)
+        data = {"filenames": all_names, "wavs": all_wavs}
         return data
 
     def process_dataset(self, root_pos, local_q):

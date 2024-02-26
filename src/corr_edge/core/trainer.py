@@ -92,12 +92,12 @@ class Trainer:
         self, *,
         dataset: th_data.Dataset, 
         network: th_nn.Module,
-        losses: Tuple[Sequence, ...],    # zip(loss_names, loss_fns, loss_weights)
+        losses: dict,    # {"losses": {*name: *func}, optional("weights"): {*name: float}, optional("network_call"): func}
         optim_fn = default_optim_fn, # a function to build optimizer
     ) -> None:
         dataset = SizedDataset(dataset)
         network = Network(network, self.device)
-        loss_fn = LossManager(*losses)
+        loss_fn = self.build_loss_fn(**losses)
         grad_scaler = GradScaler(enabled=self.amp_enabled)
         
         optimizer: th_optim.Optimizer = optim_fn(network.unwrap_model)
@@ -186,6 +186,20 @@ class Trainer:
     def load_state_dict(self, state_dict):
         self._start_epoch = state_dict['epoch']
         self.rng = RandomNumberState(state_dict['random_seed'])
+    
+    def build_loss_fn(self, losses: dict, weights: Optional[dict] = None, network_call = None):
+        names = []
+        loss_fns = []
+        loss_weights = []
+        for name in losses:
+            names.append(name)
+            loss_fns.append(losses[name])
+            if weights is None or name not in weights:
+                w = 1.0 
+            else:
+                w = weights[name]
+            loss_weights.append(w)
+        return LossManager(names, loss_fns, loss_weights, network_call)
     
     def register_plugins(self, plugins: Sequence[BasePlugin]) -> PluginPriorityQueue:
         for plugin in plugins:
