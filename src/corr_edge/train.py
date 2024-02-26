@@ -13,6 +13,7 @@ from model.adan import Adan
 exp_name = "edge"
 epoch = 2000
 batch_size = 512
+gradient_accumulation_step=2
 device = torch.device("cuda:1")
 feature_type = "jukebox"
 
@@ -41,6 +42,7 @@ trainer = Trainer(
     exp_name=exp_name,
     epoch=epoch,
     batch_size=batch_size,
+    gradient_accumulation_step=gradient_accumulation_step,
     device=device,
     plugin_debug=True
 )
