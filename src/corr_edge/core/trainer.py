@@ -3,6 +3,7 @@ import torch.nn as th_nn
 import torch.optim as th_optim
 import torch.utils.data as th_data
 import datetime
+import tqdm
 from pathlib import Path
 from typing import Optional, Sequence, Tuple, cast, Literal
 from torch.cuda.amp.autocast_mode import autocast
@@ -55,6 +56,7 @@ class Trainer:
         self.batch_size: int = batch_size
         self.gradient_accumulation_step: int = gradient_accumulation_step
         self.plugin_debug = plugin_debug
+        self.show_pbar = not plugin_debug
         
         # local index counter, start from 1
         self._local_epoch: int 
@@ -120,6 +122,7 @@ class Trainer:
             self._local_iter: int = 0
             self._local_step: int = 0
             self.rng.update()
+            self.open_pbar()
             
             if network.device != self.device:
                 network.to(self.device)
@@ -133,6 +136,7 @@ class Trainer:
                 if self.step_start:
                     self._local_step += 1
                     optimizer.zero_grad()
+                    self.update_pbar_step()
                     
                     self.plugins.step_beg_func(**training_modules)
                 
@@ -150,6 +154,7 @@ class Trainer:
                     self.plugins.step_end_func(**training_modules)
                     
             self.plugins.epoch_end_func(**training_modules)
+            self.close_pbar()
         self.plugins.loop_end_func(**training_modules)
         self.end_info()
     
@@ -200,6 +205,19 @@ class Trainer:
                 w = weights[name]
             loss_weights.append(w)
         return LossManager(names, loss_fns, loss_weights, network_call)
+    
+    def open_pbar(self):
+        if self.show_pbar:
+            self.pbar = tqdm.tqdm(total=self.dataloader_len // self.gradient_accumulation_step, leave=False)
+            self.pbar.set_description(f"[{self.epoch}/{self._start_epoch + self.epoch_duration}]")
+    
+    def close_pbar(self):
+        if self.show_pbar:
+            self.pbar.close()
+    
+    def update_pbar_step(self):
+        if self.show_pbar:
+            self.pbar.update(1)
     
     def register_plugins(self, plugins: Sequence[BasePlugin]) -> PluginPriorityQueue:
         for plugin in plugins:

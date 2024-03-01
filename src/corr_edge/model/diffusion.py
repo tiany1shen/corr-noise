@@ -8,6 +8,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.cuda.amp import autocast
 from einops import reduce
 from p_tqdm import p_map
 from pytorch3d.transforms import (axis_angle_to_quaternion,
@@ -18,6 +19,10 @@ from dataset.quaternion import ax_from_6v, quat_slerp
 from vis import skeleton_render
 
 from .utils import extract, make_beta_schedule
+
+from .corr_noise import CorrNoise
+
+# ------------------------------------------ Diffusion ------------------------------------------#
 
 def identity(t, *args, **kwargs):
     return t
@@ -55,6 +60,8 @@ class GaussianDiffusion(nn.Module):
         guidance_weight=3,
         use_p2=False,
         cond_drop_prob=0.2,
+        
+        use_corr_noise = False
     ):
         super().__init__()
         self.horizon = horizon
@@ -132,6 +139,10 @@ class GaussianDiffusion(nn.Module):
 
         ## get loss coefficients and initialize objective
         self.loss_fn = F.mse_loss if loss_type == "l2" else F.l1_loss
+        
+        self.use_corr_noise = use_corr_noise
+        if use_corr_noise:
+            self.corr_noise = CorrNoise(horizon, repr_dim)
 
     # ------------------------------------------ sampling ------------------------------------------#
 
@@ -206,6 +217,9 @@ class GaussianDiffusion(nn.Module):
             x=x, cond=cond, t=t
         )
         noise = torch.randn_like(model_mean)
+        if self.use_corr_noise:
+            noise = self.corr_noise(noise)
+        
         # no noise when t == 0
         nonzero_mask = (1 - (t == 0).float()).reshape(
             b, *((1,) * (len(noise.shape) - 1))
@@ -228,7 +242,10 @@ class GaussianDiffusion(nn.Module):
         # default to diffusion over whole timescale
         start_point = self.n_timestep if start_point is None else start_point
         batch_size = shape[0]
-        x = torch.randn(shape, device=device) if noise is None else noise.to(device)
+        noise = torch.randn(shape, device=device) if noise is None else noise.to(device)
+        if self.use_corr_noise:
+            noise = self.corr_noise(noise)
+        x = noise
         cond = cond.to(device)
 
         if return_diffusion:
@@ -255,7 +272,10 @@ class GaussianDiffusion(nn.Module):
         times = list(reversed(times.int().tolist()))
         time_pairs = list(zip(times[:-1], times[1:])) # [(T-1, T-2), (T-2, T-3), ..., (1, 0), (0, -1)]
 
-        x = torch.randn(shape, device = device)
+        noise = torch.randn(shape, device = device)
+        if self.use_corr_noise:
+            noise = self.corr_noise(noise)
+        x = noise
         cond = cond.to(device)
 
         x_start = None
@@ -293,7 +313,10 @@ class GaussianDiffusion(nn.Module):
         weights = np.clip(np.linspace(0, self.guidance_weight * 2, sampling_timesteps), None, self.guidance_weight)
         time_pairs = list(zip(times[:-1], times[1:], weights)) # [(T-1, T-2), (T-2, T-3), ..., (1, 0), (0, -1)]
 
-        x = torch.randn(shape, device = device)
+        noise = torch.randn(shape, device = device)
+        if self.use_corr_noise:
+            noise = self.corr_noise(noise)
+        x = noise
         cond = cond.to(device)
         
         assert batch > 1
@@ -317,6 +340,8 @@ class GaussianDiffusion(nn.Module):
             c = (1 - alpha_next - sigma ** 2).sqrt()
 
             noise = torch.randn_like(x)
+            if self.use_corr_noise:
+                noise = self.corr_noise(noise)
 
             x = x_start * alpha_next.sqrt() + \
                   c * pred_noise + \
@@ -340,7 +365,10 @@ class GaussianDiffusion(nn.Module):
         device = self.betas.device
 
         batch_size = shape[0]
-        x = torch.randn(shape, device=device) if noise is None else noise.to(device)
+        noise = torch.randn(shape, device=device) if noise is None else noise.to(device)
+        if self.use_corr_noise:
+            noise = self.corr_noise(noise)
+        x = noise
         cond = cond.to(device)
         if return_diffusion:
             diffusion = [x]
@@ -380,7 +408,10 @@ class GaussianDiffusion(nn.Module):
         device = self.betas.device
 
         batch_size = shape[0]
-        x = torch.randn(shape, device=device) if noise is None else noise.to(device)
+        noise = torch.randn(shape, device=device) if noise is None else noise.to(device)
+        if self.use_corr_noise:
+            noise = self.corr_noise(noise)
+        x = noise
         cond = cond.to(device)
         if return_diffusion:
             diffusion = [x]
@@ -436,6 +467,8 @@ class GaussianDiffusion(nn.Module):
     def q_sample(self, x_start, t, noise=None):
         if noise is None:
             noise = torch.randn_like(x_start)
+            if self.use_corr_noise:
+                noise = self.corr_noise(noise, ref=x_start)
 
         sample = (
             extract(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start
@@ -446,8 +479,30 @@ class GaussianDiffusion(nn.Module):
 
     def p_losses(self, x_start, cond, t):
         noise = torch.randn_like(x_start)
+        if self.use_corr_noise:
+            noise = self.corr_noise(noise, ref=x_start)
         x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
-
+        
+        # checking
+        # a = noise[:, 0]
+        # b = noise[:, -1]
+        # a -= a.mean(dim=-1, keepdim=True)
+        # a /= a.norm(dim=-1, keepdim=True)
+        # b -= b.mean(dim=-1, keepdim=True)
+        # b /= b.norm(dim=-1, keepdim=True)
+        # rho = (a * b).sum(dim=-1).mean()
+        # print(rho)
+        
+        # a = x_noisy[:, 0]
+        # b = x_noisy[:, -1]
+        # a -= a.mean(dim=-1, keepdim=True)
+        # a /= a.norm(dim=-1, keepdim=True)
+        # b -= b.mean(dim=-1, keepdim=True)
+        # b /= b.norm(dim=-1, keepdim=True)
+        # rho = (a * b).sum(dim=-1).mean()
+        # print(rho)
+        # exit()
+        
         # reconstruct
         x_recon = self.model(x_noisy, cond, t, cond_drop_prob=self.cond_drop_prob)
         assert noise.shape == x_recon.shape
@@ -704,7 +759,8 @@ class GaussianDiffusion(nn.Module):
                 # path is like "data/train/features/name"
                 pathparts[2] = "wav_sliced"
                 audioname = os.path.join(*pathparts)
-                outname = f"{epoch}_{num}_{pathparts[-1][:-4]}.pkl"
+                # outname = f"{epoch}_{num}_{pathparts[-1][:-4]}.pkl"
+                outname = f"{pathparts[-1][:-4]}.pkl"
                 pickle.dump(
                     {
                         "smpl_poses": qq.reshape((-1, 72)).cpu().numpy(),
@@ -713,3 +769,4 @@ class GaussianDiffusion(nn.Module):
                     },
                     open(f"{fk_out}/{outname}", "wb"),
                 )
+

@@ -238,11 +238,11 @@ class LoadTrainerStatePlugin(BasePlugin):
         
         if self.optimizer_file is not None:
             self.log(f"[LOOP BEG] Loading optimizer state from '{self.optimizer_file}'.")
-            optimizer.load_state_dict(th.load(self.optimizer_file))
+            optimizer.load_state_dict(th.load(self.optimizer_file, map_location=self.trainer.device))
         
         if self.scaler_file is not None:
             self.log(f"[LOOP BEG] Loading grad scaler state from '{self.scaler_file}'.")
-            scaler.load_state_dict(th.load(self.scaler_file))
+            scaler.load_state_dict(th.load(self.scaler_file, map_location=self.trainer.device))
 
     @property
     def state(self):
