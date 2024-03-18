@@ -5,7 +5,7 @@ from pathlib import Path
 
 import torch
 
-from .scaler import MinMaxScaler
+from .scaler import MinMaxScaler, StandardScaler
 
 
 def increment_path(path, exist_ok=False, sep="", mkdir=False):
@@ -26,9 +26,13 @@ def increment_path(path, exist_ok=False, sep="", mkdir=False):
 
 
 class Normalizer:
-    def __init__(self, data):
+    def __init__(self, data, type="minmax"):
         flat = data.reshape(-1, data.shape[-1])
-        self.scaler = MinMaxScaler((-1, 1), clip=True)
+        self.type = type
+        if type == "minmax":
+            self.scaler = MinMaxScaler((-1, 1), clip=True)
+        elif type == "standard":
+            self.scaler = StandardScaler()
         self.scaler.fit(flat)
 
     def normalize(self, x):
@@ -39,7 +43,8 @@ class Normalizer:
     def unnormalize(self, x):
         batch, seq, ch = x.shape
         x = x.reshape(-1, ch)
-        x = torch.clip(x, -1, 1)  # clip to force compatibility
+        if self.type == "minmax":
+            x = torch.clip(x, -1, 1)  # clip to force compatibility
         return self.scaler.inverse_transform(x).reshape((batch, seq, ch))
 
 

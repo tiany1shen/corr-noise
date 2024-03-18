@@ -26,9 +26,13 @@ class AISTPPDataset(Dataset):
         train: bool,
         feature_type: str = "jukebox",
         normalizer: Any = None,
+        normalizer_type: str = "minmax",
         data_len: int = -1,
         include_contacts: bool = True,
         force_reload: bool = False,
+        pose_type: str = "rot6d", 
+        
+        mini=False,
     ):
         self.data_path = data_path
         self.raw_fps = 60
@@ -39,19 +43,21 @@ class AISTPPDataset(Dataset):
         self.train = train
         self.name = "Train" if self.train else "Test"
         self.feature_type = feature_type
+        self.pose_type = pose_type
 
         self.normalizer = normalizer
+        self.normalizer_type = normalizer_type
         self.data_len = data_len
 
         pickle_name = "processed_train_data.pkl" if train else "processed_test_data.pkl"
 
         backup_path = Path(backup_path)
         backup_path.mkdir(parents=True, exist_ok=True)
-        # save normalizer
-        if not train:
-            pickle.dump(
-                normalizer, open(os.path.join(backup_path, "normalizer.pkl"), "wb")
-            )
+        # # save normalizer
+        # if not train:
+        #     pickle.dump(
+        #         normalizer, open(os.path.join(backup_path, "normalizer.pkl"), "wb")
+        #     )
         # load raw pose data
         if not force_reload and pickle_name in os.listdir(backup_path):
             print("Using cached dataset...")
@@ -67,10 +73,18 @@ class AISTPPDataset(Dataset):
             f"Loaded {self.name} Dataset With Dimensions: Pos: {data['pos'].shape}, Q: {data['q'].shape}"
         )
         
+        if mini:
+            data['pos'] = data['pos'][::10]
+            data['q'] = data['q'][::10]
+        
         # process data, convert to 6dof etc
         pose_input = self.process_dataset(data["pos"], data["q"])
         # load feature & wav paths
         feature_paths = self.load_aistpp_feat()
+        
+        if mini:
+            feature_paths['filenames'] = feature_paths['filenames'][::10]
+            feature_paths['wavs'] = feature_paths['wavs'][::10]
         
         self.data = {
             "pose": pose_input,
@@ -187,7 +201,14 @@ class AISTPPDataset(Dataset):
         contacts = (feetv < 0.01).to(local_q)  # cast to right dtype
 
         # to 6d
-        local_q = ax_to_6v(local_q)
+        if self.pose_type == "rot6d":
+            local_q = ax_to_6v(local_q)
+        elif self.pose_type == "joint3d":
+            local_q = positions - positions[:, :, :1, :]
+        elif self.pose_type == "rot3d":
+            local_q = local_q
+        else:
+            raise NotImplementedError
 
         # now, flatten everything into: batch x sequence x [...]
         l = [contacts, root_pos, local_q]
@@ -195,7 +216,7 @@ class AISTPPDataset(Dataset):
 
         # normalize the data. Both train and test need the same normalizer.
         if self.train:
-            self.normalizer = Normalizer(global_pose_vec_input)
+            self.normalizer = Normalizer(global_pose_vec_input, type=self.normalizer_type)
         else:
             assert self.normalizer is not None
         global_pose_vec_input = self.normalizer.normalize(global_pose_vec_input)

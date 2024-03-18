@@ -73,6 +73,8 @@ if __name__ == "__main__":
         feature_type=opt.feature_type,
         normalizer_type=opt.normalizer_type,
         pose_type=opt.pose_type,
+        
+        mini=True,
     )
     
     use_baseline_feats = opt.feature_type == "baseline"
@@ -130,6 +132,7 @@ if __name__ == "__main__":
         pose_type=opt.pose_type,
         noise_schedule=noise_schedule,
         normalizer=train_dataset.normalizer,
+        only_recon_loss=True,
     )
     if opt.affine_noise:
         affine_matrix_dir = os.path.join(opt.data_path, opt.backup_path, opt.affine_matrix_dir)
@@ -176,8 +179,8 @@ if __name__ == "__main__":
         "losses": {
             "reconstruct": lambda out, batch: out[0],
             "velocity": lambda out, batch: out[1],
-            "forward-kinetic": lambda out, batch: out[2],
-            "foot-contact": lambda out, batch: out[3],
+            # "forward-kinetic": lambda out, batch: out[2],
+            # "foot-contact": lambda out, batch: out[3],
         }
     }
 
@@ -227,6 +230,8 @@ if __name__ == "__main__":
             def state(self): return {}
         
         trainer.append_plugin(EdgeEmaPlugin(new_ema=opt.new_ema))
+    
+    
 
     trainer.extend_plugins([
         EpochSavePlugin(period=opt.save_period),

@@ -20,7 +20,7 @@ from vis import skeleton_render
 
 from .utils import extract, make_beta_schedule
 
-from .corr_noise import CorrNoise
+from .corr_noise import CorrNoise, AffineNoise
 
 # ------------------------------------------ Diffusion ------------------------------------------#
 
@@ -61,7 +61,11 @@ class GaussianDiffusion(nn.Module):
         use_p2=False,
         cond_drop_prob=0.2,
         
-        use_corr_noise = False
+        pose_type = "rot6d",
+        noise_schedule = None,
+        normalizer = None,
+        
+        only_recon_loss = False,
     ):
         super().__init__()
         self.horizon = horizon
@@ -74,6 +78,9 @@ class GaussianDiffusion(nn.Module):
 
         # make a SMPL instance for FK module
         self.smpl = smpl
+        self.pose_type = pose_type
+        self.normalizer = normalizer
+        self.only_recon_loss = only_recon_loss
 
         betas = torch.Tensor(
             make_beta_schedule(schedule=schedule, n_timestep=n_timestep)
@@ -140,9 +147,11 @@ class GaussianDiffusion(nn.Module):
         ## get loss coefficients and initialize objective
         self.loss_fn = F.mse_loss if loss_type == "l2" else F.l1_loss
         
-        self.use_corr_noise = use_corr_noise
-        if use_corr_noise:
+        self.use_corr_noise = (noise_schedule != None and noise_schedule != "normal_noise")
+        if noise_schedule == "corr_noise":
             self.corr_noise = CorrNoise(horizon, repr_dim)
+        elif noise_schedule == "affine_noise":
+            self.corr_noise = AffineNoise(horizon)
 
     # ------------------------------------------ sampling ------------------------------------------#
 
@@ -202,8 +211,9 @@ class GaussianDiffusion(nn.Module):
 
         if self.clip_denoised:
             x_recon.clamp_(-1.0, 1.0)
-        else:
-            assert RuntimeError()
+        # else:
+        #     assert RuntimeError()
+            
 
         model_mean, posterior_variance, posterior_log_variance = self.q_posterior(
             x_start=x_recon, x_t=x, t=t
@@ -265,22 +275,29 @@ class GaussianDiffusion(nn.Module):
             return x
         
     @torch.no_grad()
-    def ddim_sample(self, shape, cond, **kwargs):
-        batch, device, total_timesteps, sampling_timesteps, eta = shape[0], self.betas.device, self.n_timestep, 50, 1
+    def ddim_sample(self, shape, cond, eta=0, sampling_timesteps=50, noise_start=None, return_diffusion=False, **kwargs):
+        batch, device, total_timesteps = shape[0], self.betas.device, self.n_timestep
 
         times = torch.linspace(-1, total_timesteps - 1, steps=sampling_timesteps + 1)   # [-1, 0, 1, 2, ..., T-1] when sampling_timesteps == total_timesteps
         times = list(reversed(times.int().tolist()))
         time_pairs = list(zip(times[:-1], times[1:])) # [(T-1, T-2), (T-2, T-3), ..., (1, 0), (0, -1)]
 
-        noise = torch.randn(shape, device = device)
+        if noise_start is None:
+            noise = torch.randn(shape, device = device)
+        else:
+            assert noise_start.shape == shape
+            noise = noise_start.to(device)
         if self.use_corr_noise:
             noise = self.corr_noise(noise)
         x = noise
         cond = cond.to(device)
 
         x_start = None
+        if return_diffusion:
+            diffusion = []
 
         for time, time_next in tqdm(time_pairs, desc = 'sampling loop time step'):
+                
             time_cond = torch.full((batch,), time, device=device, dtype=torch.long)
             pred_noise, x_start, *_ = self.model_predictions(x, cond, time_cond, clip_x_start = self.clip_denoised)
 
@@ -290,23 +307,32 @@ class GaussianDiffusion(nn.Module):
 
             alpha = self.alphas_cumprod[time]
             alpha_next = self.alphas_cumprod[time_next]
+            
+            if return_diffusion:
+                diffusion.append(x)
 
             sigma = eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
             c = (1 - alpha_next - sigma ** 2).sqrt()
 
             noise = torch.randn_like(x)
+            if self.use_corr_noise:
+                noise = self.corr_noise(noise)
 
             x = x_start * alpha_next.sqrt() + \
                   c * pred_noise + \
                   sigma * noise
+
+        if return_diffusion:
+            diffusion.append(x)
+            return x, diffusion
         return x
     
     @torch.no_grad()
-    def long_ddim_sample(self, shape, cond, **kwargs):
-        batch, device, total_timesteps, sampling_timesteps, eta = shape[0], self.betas.device, self.n_timestep, 50, 1
+    def long_ddim_sample(self, shape, cond, eta=0, **kwargs):
+        batch, device, total_timesteps, sampling_timesteps = shape[0], self.betas.device, self.n_timestep, 50
         
         if batch == 1:
-            return self.ddim_sample(shape, cond)
+            return self.ddim_sample(shape, cond, eta)
 
         times = torch.linspace(-1, total_timesteps - 1, steps=sampling_timesteps + 1)   # [-1, 0, 1, 2, ..., T-1] when sampling_timesteps == total_timesteps
         times = list(reversed(times.int().tolist()))
@@ -347,6 +373,7 @@ class GaussianDiffusion(nn.Module):
                   c * pred_noise + \
                   sigma * noise
             
+            # todo: modify generation 
             if time > 0:
                 # the first half of each sequence is the second half of the previous one
                 x[1:, :half] = x[:-1, half:]
@@ -483,26 +510,6 @@ class GaussianDiffusion(nn.Module):
             noise = self.corr_noise(noise, ref=x_start)
         x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
         
-        # checking
-        # a = noise[:, 0]
-        # b = noise[:, -1]
-        # a -= a.mean(dim=-1, keepdim=True)
-        # a /= a.norm(dim=-1, keepdim=True)
-        # b -= b.mean(dim=-1, keepdim=True)
-        # b /= b.norm(dim=-1, keepdim=True)
-        # rho = (a * b).sum(dim=-1).mean()
-        # print(rho)
-        
-        # a = x_noisy[:, 0]
-        # b = x_noisy[:, -1]
-        # a -= a.mean(dim=-1, keepdim=True)
-        # a /= a.norm(dim=-1, keepdim=True)
-        # b -= b.mean(dim=-1, keepdim=True)
-        # b /= b.norm(dim=-1, keepdim=True)
-        # rho = (a * b).sum(dim=-1).mean()
-        # print(rho)
-        # exit()
-        
         # reconstruct
         x_recon = self.model(x_noisy, cond, t, cond_drop_prob=self.cond_drop_prob)
         assert noise.shape == x_recon.shape
@@ -530,6 +537,16 @@ class GaussianDiffusion(nn.Module):
         v_loss = self.loss_fn(model_out_v, target_v, reduction="none")
         v_loss = reduce(v_loss, "b ... -> b (...)", "mean")
         v_loss = v_loss * extract(self.p2_loss_weight, t, v_loss.shape)
+        
+        
+        if self.only_recon_loss:
+            mini_losses = (
+                0.636 * loss.mean(),
+                2.964 * v_loss.mean().detach(),
+                0,
+                0,
+            )
+            return sum(mini_losses), mini_losses
 
         # FK loss
         b, s, c = model_out.shape
@@ -538,14 +555,24 @@ class GaussianDiffusion(nn.Module):
         # target = self.normalizer.unnormalize(target)
         # X, Q
         model_x = model_out[:, :, :3]
-        model_q = ax_from_6v(model_out[:, :, 3:].reshape(b, s, -1, 6))
         target_x = target[:, :, :3]
-        target_q = ax_from_6v(target[:, :, 3:].reshape(b, s, -1, 6))
+        if self.pose_type == "rot6d":
+            model_q = ax_from_6v(model_out[:, :, 3:].reshape(b, s, -1, 6))
+            target_q = ax_from_6v(target[:, :, 3:].reshape(b, s, -1, 6))
+        elif self.pose_type in ["rot3d", "joint3d"]:
+            model_q = model_out[:, :, 3:]
+            target_q = target[:, :, 3:]
+        else:
+            raise NotImplementedError
 
         # perform FK
-        model_xp = self.smpl.forward(model_q, model_x)
-        target_xp = self.smpl.forward(target_q, target_x)
-
+        if self.pose_type in ['rot6d', 'rot3d']:
+            model_xp = self.smpl.forward(model_q, model_x)
+            target_xp = self.smpl.forward(target_q, target_x)
+        elif self.pose_type == "joint3d":
+            model_xp = model_q.reshape(b, s, -1, 3) + model_x.reshape(b, s, 1, 3)
+            target_xp = target_q.reshape(b, s, -1, 3) + target_x.reshape(b, s, 1, 3)
+        
         fk_loss = self.loss_fn(model_xp, target_xp, reduction="none")
         fk_loss = reduce(fk_loss, "b ... -> b (...)", "mean")
         fk_loss = fk_loss * extract(self.p2_loss_weight, t, fk_loss.shape)
@@ -583,6 +610,7 @@ class GaussianDiffusion(nn.Module):
         return self.p_losses(x, cond, t)
 
     def forward(self, x, cond, t_override=None):
+        assert self.normalizer is not None
         return self.loss(x, cond, t_override)
 
     def partial_denoise(self, x, cond, t):
@@ -636,7 +664,7 @@ class GaussianDiffusion(nn.Module):
 
         samples = normalizer.unnormalize(samples)
 
-        if samples.shape[2] == 151:
+        if samples.shape[2] in [151, 79]:
             sample_contact, samples = torch.split(
                 samples, (4, samples.shape[2] - 4), dim=2
             )
@@ -645,9 +673,12 @@ class GaussianDiffusion(nn.Module):
         # do the FK all at once
         b, s, c = samples.shape
         pos = samples[:, :, :3].to(cond.device)  # np.zeros((sample.shape[0], 3))
-        q = samples[:, :, 3:].reshape(b, s, 24, 6)
-        # go 6d to ax
-        q = ax_from_6v(q).to(cond.device)
+        if self.pose_type == "rot6d":
+            q = samples[:, :, 3:].reshape(b, s, 24, 6)
+            # go 6d to ax
+            q = ax_from_6v(q).to(cond.device)
+        elif self.pose_type in ["rot3d", "joint3d"]:
+            q = samples[:, :, 3:].reshape(b, s, 24, 3).to(cond.device)
 
         if mode == "long":
             b, s, c1, c2 = q.shape
@@ -674,6 +705,7 @@ class GaussianDiffusion(nn.Module):
                     full_pos[idx : idx + s] += pos_slice
                     idx += half
 
+                # todo: stitch with slerp only valid for rotation axis-angle repr.
                 # stitch joint angles with slerp
                 slerp_weight = torch.linspace(0, 1, half)[None, :, None].to(pos.device)
 
@@ -727,8 +759,10 @@ class GaussianDiffusion(nn.Module):
                     open(os.path.join(fk_out, outname), "wb"),
                 )
             return
-
-        poses = self.smpl.forward(q, pos).detach().cpu().numpy()
+        if self.pose_type.startswith('rot'):
+            poses = self.smpl.forward(q, pos).detach().cpu().numpy()
+        else:
+            poses = (q + pos.reshape(b, s, 1, 3)).detach().cpu().numpy()
         sample_contact = (
             sample_contact.detach().cpu().numpy()
             if sample_contact is not None

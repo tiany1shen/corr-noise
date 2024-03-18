@@ -1,4 +1,6 @@
 tmp.*
+temp.*
+temp/
 outputs/
 tb-logs/
 examples/

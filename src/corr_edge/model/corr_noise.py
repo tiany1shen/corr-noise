@@ -4,6 +4,24 @@ import torch.nn as nn
 from typing import Optional
 from einops import rearrange
 
+
+class AffineNoise(nn.Module):
+    def __init__(self, size: int):
+        super().__init__()
+        self.size = size 
+        self.register_buffer("affine_matrix", torch.eye(size))
+        self.affine_matrix: torch.Tensor
+    
+    def forward(self, noise, *args, **kwargs):
+        # noise: (batch, seq-len, dim)
+        return torch.matmul(self.affine_matrix, noise)
+    
+    def load_affine(self, matrix):
+        self.affine_matrix = matrix.to(self.affine_matrix.device)
+
+
+
+
 class CorrNoise(nn.Module):
     def __init__(self, size: int, dim: int, eps: float = 0.00001, momentum: float = 0.1, 
                 device: Optional[torch.device] = None, dtype: Optional[torch.dtype] = None, track_running_stats: bool = True):
