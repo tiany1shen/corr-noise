@@ -91,3 +91,95 @@ def vectorize_many(data):
 
     global_pose_vec_gt = torch.cat(out, dim=2)
     return global_pose_vec_gt
+
+
+def standarize_3d_trajectory(root_positions):
+    '''
+    Translate a (batched) trajectory by making it starting from the origin (0, 0, 0)
+    
+    Parameters
+    ----------
+    root_positions: torch.Tensor (..., N, 3)
+        (Batched) 3d trajectory
+    
+    Returns
+    -------
+    root_positions: torch.Tensor (..., N, 3)
+        (Batched) standard 3d trajectory starting from (0, 0, 0)
+    '''
+    return root_positions - root_positions[..., :1, :]
+
+
+def permute_xyz2zxy(vector3d):
+    '''
+    Permute a (batched) 3d vector's last dimension by (2, 0, 1)
+    '''
+    return vector3d[..., (2, 0, 1)]
+
+
+def rot_matrix_to_XOZ(vector3d):
+    '''
+    Compute a (batched) rotation matrix that can rotate a given vector along axis Z+ 
+    to fall into plane +XOZ.
+    
+    Parameters
+    ----------
+    vector3d: torch.Tensor (..., 3)
+    
+    Returns
+    -------
+    rot_mat: torch.Tensor (..., 3, 3)
+    
+    Examples
+    --------
+    >>> x = torch.tensor([3.0, 4.0, 2.0])
+    >>> rot_matrix_to_XOZ(x)
+    
+    The output is:
+    >>> torch.tensor([[ 0.6, 0.8, 0.0], 
+                      [-0.8, 0.6, 0.0], 
+                      [ 0.0, 0.0, 1.0]])
+    
+    since we can check: the result's Y entries are 0.
+    >>> (torch.matmul(rot_matix_to_XOZ(x), x.unsqueeze(-1))[..., 1, :] == 0).all()
+    >>> True
+    
+    the transforms do not change Z entries.
+    >>> (torch.matmul(rot_matix_to_XOZ(x), x.unsqueeze(-1))[..., 2, :] ==  x.unsqueeze(-1)[..., 2, :]).all()
+    >>> True 
+    
+    the vectors are rigid and has same length.
+    >>> (torch.matmul(rot_matix_to_XOZ(x), x.unsqueeze(-1)).norm(dim=-2) == x.unsqueeze(-1).norm(dim=-2)).all()
+    >>> True
+    '''
+    vector3d = vector3d.float()
+    rot_mat = torch.zeros(vector3d.shape[:-1] + (3, 3), device=vector3d.device)
+    
+    normal_xoy = vector3d[..., :2] / vector3d[..., :2].norm(dim=-1, keepdim=True)
+    rot_mat[..., 0, 0] += normal_xoy[..., 0]
+    rot_mat[..., 0, 1] += normal_xoy[..., 1]
+    rot_mat[..., 1, 0] += normal_xoy[..., 1] * -1
+    rot_mat[..., 1, 1] += normal_xoy[..., 0]
+    rot_mat[..., 2, 2] += 1.0
+    
+    return rot_mat
+
+
+def compute_ground_height(motions):
+    '''
+    Given a (batched) motions, recognize the (batched) gound heights
+    
+    Parameters
+    ----------
+    motions: torch.Tensor (..., N, J, 3)
+    
+    Returns
+    -------
+    gounds: torch.Tensor (..., )
+        the probably ground heights of the given motions
+    '''
+    lowest_zs = torch.topk(motions[..., 2], k=2, dim=-1, largest=False)[0].mean(dim=-1)
+    length = lowest_zs.shape[-1]
+    lowest_zs = torch.topk(lowest_zs, k= length//2, dim=-1, largest=False)[0].mean(dim=-1)
+    return lowest_zs
+    
