@@ -12,7 +12,7 @@ from slice_data_pair import slice_folder
 def parse_opt():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--dataset", choices=['EDGE', 'FineDance'], help="Dataset name.")
+        "--dataset", choices=['EDGE', 'FineDance', 'Aistpp'], help="Dataset name.")
     parser.add_argument(
         "--data-path", type=str, help="Diretory where the data folder lies.")
     parser.add_argument(
@@ -29,6 +29,8 @@ def check_data_available(dataset_name, raw_data_path):
         data_path = Path(raw_data_path, "edge_aistpp")
     elif dataset_name == "FineDance":
         data_path = Path(raw_data_path, "finedance")
+    elif dataset_name == "Aistpp":
+        data_path = Path(raw_data_path, "aistpp")
     else:
         raise NotImplementedError
     
@@ -53,5 +55,9 @@ def create_dataset(opt):
 
 
 if __name__ == "__main__":
-    create_dataset(parse_opt())
+    # extract_folder(
+    #     Path("/root/autodl-tmp/Aistpp/test/wav"),
+    #     Path("/root/autodl-tmp/Aistpp/test/music"),
+    # )
     
+    create_dataset(parse_opt())

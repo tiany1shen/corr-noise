@@ -251,6 +251,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     
     parser.add_argument(
+        "--data-path", type=str)
+    parser.add_argument(
         "--save-joint", action="store_true")
     parser.add_argument(
         "--render", action="store_true")
@@ -312,8 +314,7 @@ if __name__ == "__main__":
         for gif in rendered_gifs:
             print("  " + gif)
 
+    data_path = Path(opt.data_path)
+    dataset = Sliced_BodyMotion_Music(data_path.parent, data_path.name)
     
-    render_joints(Sliced_BodyMotion_Music("/ssd/shenty/FineDance/", "test"))
-    render_joints(Sliced_BodyMotion_Music("/ssd/shenty/FineDance/", "train"))
-    render_joints(Sliced_BodyMotion_Music("/ssd/shenty/EDGE/", "test"))
-    render_joints(Sliced_BodyMotion_Music("/ssd/shenty/EDGE/", "train"))
+    render_joints(dataset)

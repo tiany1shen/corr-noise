@@ -1,19 +1,21 @@
-import glob
 import numpy as np
 from pathlib import Path 
+
+from filter_split_data import get_pair_names_by_sequence
 
 
 def motion_music_pair_generator(data_dir):
     motion_path = Path(data_dir, "motion")
     music_path = Path(data_dir, "music")
     
-    motion_files = sorted(motion_path.glob("*.npy"))
-    music_files = sorted(music_path.glob("*.npy"))
-    for motion_file, music_file in zip(motion_files, music_files):
-        motion_name = Path(motion_file).stem 
-        music_name = Path(music_file).stem 
-        assert motion_name == music_name 
-        yield motion_name, motion_file, music_file
+    dataset_name = motion_path.parent.parent.name
+    for motion_file in sorted(motion_path.glob("*.npy")):
+        
+        sequence_name = motion_file.stem
+        _, wav_name = get_pair_names_by_sequence(sequence_name, dataset_name)
+        music_file = music_path / (wav_name + ".npy")
+        
+        yield sequence_name, motion_file, music_file
 
 def slice_folder(data_dir, clip_duration, fps = 30, stride=0.5):
     clip_length = int(clip_duration * fps)
@@ -52,6 +54,7 @@ def slice_folder(data_dir, clip_duration, fps = 30, stride=0.5):
 
 if __name__ == "__main__":
     slice_folder(
-        data_dir="/ssd/shenty/EDGE/test/",
+        data_dir="/root/autodl-tmp/Aistpp/test/",
         clip_duration=5,
     )
+    
