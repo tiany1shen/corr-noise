@@ -5,7 +5,6 @@ outputs/
 tb-logs/
 examples/
 edge_aistpp/
-data/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

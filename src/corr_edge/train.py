@@ -12,36 +12,60 @@ from model.adan import Adan
 
 def parse_train_opt():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--exp-name", default="runs")
-    parser.add_argument("--total-epoch", type=int, default=2000)
-    parser.add_argument("--batch-size", type=int, default=64)
-    parser.add_argument("--gradient-accumulation-step", type=int, default=1)
-    parser.add_argument("--device", type=int, default=0)
-    parser.add_argument("--seed", type=int, default=None)
-    parser.add_argument("--log-console", action="store_true")
+    parser.add_argument(
+        "--exp-name", default="runs")
+    parser.add_argument(
+        "--total-epoch", type=int, default=2000)
+    parser.add_argument(
+        "--batch-size", type=int, default=64)
+    parser.add_argument(
+        "--gradient-accumulation-step", type=int, default=1)
+    parser.add_argument(
+        "--device", type=int, default=0)
+    parser.add_argument(
+        "--seed", type=int, default=None)
+    parser.add_argument(
+        "--log-console", action="store_true")
     
-    parser.add_argument("--data-path", type=str, default="data/")
-    parser.add_argument("--backup-path", type=str, default="dataset_backups/")
-    parser.add_argument("--feature-type", type=str, choices=["baseline","jukebox"])
-    parser.add_argument("--pose-type", type=str, choices=['rot6d', 'rot3d', 'joint3d'], default='rot6d')
-    parser.add_argument("--normalizer-type", type=str, choices=["minmax", "standard"], default="minmax")
+    parser.add_argument(
+        "--data-path", type=str, default="data/")
+    parser.add_argument(
+        "--backup-path", type=str, default="dataset_backups/")
+    parser.add_argument(
+        "--feature-type", type=str, choices=["baseline","jukebox"])
+    parser.add_argument(
+        "--pose-type", type=str, choices=['rot6d', 'rot3d', 'joint3d'], default='rot6d')
+    parser.add_argument(
+        "--normalizer-type", type=str, choices=["minmax", "standard"], default="minmax")
     
-    parser.add_argument("--learning-rate", type=float, default=4e-4)
-    parser.add_argument("--weight-decay", type=float, default=0.02)
+    parser.add_argument(
+        "--learning-rate", type=float, default=4e-4)
+    parser.add_argument(
+        "--weight-decay", type=float, default=0.02)
     
-    parser.add_argument("--save-period", type=int, default=100)
-    parser.add_argument("--log-period", type=int, default=5)
+    parser.add_argument(
+        "--save-period", type=int, default=100)
+    parser.add_argument(
+        "--log-period", type=int, default=5)
     
-    parser.add_argument("--load-checkpoint-dir", type=str, default="")  #e.g. epoch-2000
-    parser.add_argument("--enable-ema", action="store_true")
-    parser.add_argument("--new-ema", action="store_true")
+    parser.add_argument(
+        "--load-checkpoint-dir", type=str, default="")  #e.g. epoch-2000
+    parser.add_argument(
+        "--enable-ema", action="store_true")
+    parser.add_argument(
+        "--new-ema", action="store_true")
     
     noise = parser.add_mutually_exclusive_group()
-    noise.add_argument("--normal-noise", action="store_true")
-    noise.add_argument("--corr-noise", action="store_true")
-    noise.add_argument("--affine-noise", action="store_true")
-    parser.add_argument("--reload-affine", action="store_true")
-    parser.add_argument("--affine-matrix-dir", type=str, default="affine_matrix_rot6d.pt")
+    noise.add_argument(
+        "--normal-noise", action="store_true")
+    noise.add_argument(
+        "--corr-noise", action="store_true")
+    noise.add_argument(
+        "--affine-noise", action="store_true")
+    parser.add_argument(
+        "--reload-affine", action="store_true")
+    parser.add_argument(
+        "--affine-matrix-dir", type=str, default="affine_matrix_rot6d.pt")
     
     return parser.parse_args()
 
